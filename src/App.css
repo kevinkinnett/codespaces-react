@@ -1,31 +1,70 @@
 .App {
-  text-align: center;
-}
-
-.App-logo {
-  height: 40vmin;
-  pointer-events: none;
-}
-
-.App-header {
-  background-color: #282c34;
   min-height: 100vh;
   display: flex;
   flex-direction: column;
-  align-items: center;
+}
+
+.site-header {
+  background-color: #3e5f8a;
+  color: #fff;
+  padding: 2rem 1rem;
+  text-align: center;
+}
+
+.tagline {
+  font-size: 1.2rem;
+  margin-top: 0.5rem;
+}
+
+.content {
+  flex: 1;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 1.5rem;
   justify-content: center;
-  font-size: calc(10px + 2vmin);
-  color: white;
+  padding: 2rem;
 }
 
-.App-link {
-  color: #61dafb;
+.work-card {
+  background: #fff;
+  border-radius: 8px;
+  box-shadow: 0 2px 6px rgba(0, 0, 0, 0.1);
+  max-width: 300px;
+  padding: 1rem;
 }
 
-.heart {
-  color: #ff0000;
+.work-card h3 {
+  margin-top: 0;
 }
 
-.small {
-  font-size: 0.75rem;
+.original-text {
+  font-style: italic;
+}
+
+.work-card button {
+  margin-top: 1rem;
+  background: #3e5f8a;
+  color: #fff;
+  border: none;
+  padding: 0.5rem 1rem;
+  border-radius: 4px;
+  cursor: pointer;
+}
+
+.work-card button:hover {
+  background: #2d476b;
+}
+
+.translation {
+  margin-top: 1rem;
+  background: #f0f0f0;
+  padding: 0.5rem;
+  border-radius: 4px;
+}
+
+.footer {
+  text-align: center;
+  padding: 1rem;
+  font-size: 0.8rem;
+  background: #e5e3d8;
 }

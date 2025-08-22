@@ -1,9 +1,9 @@
 import { expect, test } from 'vitest';
 import { render, screen } from '@testing-library/react';
-import App from './App';
+import App from './App.jsx';
 
-test('renders learn react link', () => {
+test('renders site title', () => {
   render(<App />);
-  const linkElement = screen.getByText(/learn react/i);
-  expect(linkElement).toBeDefined();
+  const heading = screen.getByText(/Origen Translations/i);
+  expect(heading).toBeDefined();
 });

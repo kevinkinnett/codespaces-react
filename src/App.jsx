@@ -1,27 +1,22 @@
 import './App.css';
+import WorkCard from './components/WorkCard.jsx';
+import { works } from './data/works.js';
 
 function App() {
   return (
     <div className="App">
-      <header className="App-header">
-        <img src="Octocat.png" className="App-logo" alt="logo" />
-        <p>
-          GitHub Codespaces <span className="heart">♥️</span> React
-        </p>
-        <p className="small">
-          Edit <code>src/App.jsx</code> and save to reload.
-        </p>
-        <p>
-          <a
-            className="App-link"
-            href="https://reactjs.org"
-            target="_blank"
-            rel="noopener noreferrer"
-          >
-            Learn React
-          </a>
-        </p>
+      <header className="site-header">
+        <h1>Origen Translations</h1>
+        <p className="tagline">Machine-translated access to the overlooked writings of Origen.</p>
       </header>
+      <main className="content">
+        {works.map((w) => (
+          <WorkCard key={w.id} work={w} />
+        ))}
+      </main>
+      <footer className="footer">
+        Sources are in the public domain. Translations are machine generated.
+      </footer>
     </div>
   );
 }
