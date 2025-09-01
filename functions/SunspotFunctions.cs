@@ -3,6 +3,8 @@ using System.Linq;
 using System.Net.Http;
 using System.Text.Json;
 using System.Threading.Tasks;
+using System.Collections.Generic;
+using System.Globalization;
 using Azure;
 using Azure.Data.Tables;
 using Microsoft.Azure.WebJobs;
@@ -20,6 +22,8 @@ namespace SunspotFunctions
 
         // LISIRD JSON endpoint (international sunspot number)
         private const string LisirdUrl = "https://lasp.colorado.edu/lisird/api/international_sunspot_number/time_series?format=json";
+    // SILSO daily file (text) fallback
+    private const string SilsoDailyUrl = "https://www.sidc.be/silso/DATA/SN_d_tot_V2.0.txt";
 
         [FunctionName("IngestSunspotsTimer")]
         public static async Task IngestSunspotsTimer([TimerTrigger("0 5 2 * * *")] TimerInfo myTimer, ILogger log)
@@ -179,48 +183,84 @@ namespace SunspotFunctions
             try
             {
                 using var http = new HttpClient();
+                // Add headers to make the request look like a JSON API client
+                http.DefaultRequestHeaders.Accept.Clear();
+                http.DefaultRequestHeaders.Accept.ParseAdd("application/json");
+                if (!http.DefaultRequestHeaders.UserAgent.TryParseAdd("SunspotIngest/1.0 (+https://example.com)")) { }
+
                 using var resp = await http.GetAsync(LisirdUrl);
+                var raw = await resp.Content.ReadAsStringAsync();
                 if (!resp.IsSuccessStatusCode)
                 {
-                    var body = await resp.Content.ReadAsStringAsync();
-                    log.LogError("LISIRD returned non-success status {status}: {body}", resp.StatusCode, body);
+                    log.LogError("LISIRD returned non-success status {status}: {body}", resp.StatusCode, raw);
                     resp.EnsureSuccessStatusCode();
                 }
 
-                using var stream = await resp.Content.ReadAsStreamAsync();
-                using var doc = await JsonDocument.ParseAsync(stream);
-
-                if (doc.RootElement.ValueKind != JsonValueKind.Array)
+                // Quick sanity check: if body starts with '<' it's probably HTML (error page)
+                if (!string.IsNullOrEmpty(raw) && raw.TrimStart().StartsWith("<"))
                 {
-                    var txt = doc.RootElement.ToString();
-                    log.LogError("Unexpected LISIRD payload: {payload}", txt);
-                    throw new InvalidOperationException("Unexpected LISIRD JSON shape");
+                    log.LogError("LISIRD returned HTML instead of JSON: {snippet}", raw.Length > 800 ? raw[..800] : raw);
+                    throw new InvalidOperationException("LISIRD returned HTML instead of JSON");
                 }
 
-                var points = doc.RootElement.EnumerateArray()
-                    .Select(e => new
+                try
+                {
+                    using var doc = JsonDocument.Parse(raw);
+
+                    if (doc.RootElement.ValueKind != JsonValueKind.Array)
                     {
-                        date = e.GetProperty("time").GetString()!.Substring(0, 10),
-                        value = e.TryGetProperty("value", out var v) && v.ValueKind != JsonValueKind.Null ? v.GetDouble() : (double?)null
-                    })
-                    .Where(p => p.value.HasValue)
-                    .GroupBy(p => p.date)
-                    .Select(g => g.Last())
-                    .ToList();
+                        var txt = doc.RootElement.ToString();
+                        log.LogWarning("LISIRD JSON not an array, falling back to SILSO CSV. payload starts: {payload}", txt.Length > 400 ? txt[..400] : txt);
+                        throw new InvalidOperationException("Unexpected LISIRD JSON shape");
+                    }
 
-                var client = GetTableClient();
-                await client.CreateIfNotExistsAsync();
+                    var points = doc.RootElement.EnumerateArray()
+                        .Select(e => new
+                        {
+                            date = e.GetProperty("time").GetString()!.Substring(0, 10),
+                            value = e.TryGetProperty("value", out var v) && v.ValueKind != JsonValueKind.Null ? v.GetDouble() : (double?)null
+                        })
+                        .Where(p => p.value.HasValue)
+                        .GroupBy(p => p.date)
+                        .Select(g => g.Last())
+                        .ToList();
 
-                foreach (var p in points)
+                    // proceed with JSON points
+                    var client = GetTableClient();
+                    await client.CreateIfNotExistsAsync();
+
+                    foreach (var p in points)
+                    {
+                        var entity = new TableEntity(p.date[..4], p.date)
+                        {
+                            { "R", p.value.Value }
+                        };
+                        await client.UpsertEntityAsync(entity, TableUpdateMode.Replace);
+                    }
+
+                    log.LogInformation("Backfill complete: inserted {count} rows (LISIRD)", points.Count);
+                    return;
+                }
+                catch (Exception jsonEx)
+                {
+                    log.LogWarning(jsonEx, "Failed to parse LISIRD JSON, attempting SILSO CSV fallback");
+                }
+
+                // If we reach here, LISIRD parsing failed — try SILSO CSV fallback
+                log.LogInformation("Fetching SILSO daily data from {url}", SilsoDailyUrl);
+                var silsoPoints = await FetchSilsoDailyAsync(log);
+                var client2 = GetTableClient();
+                await client2.CreateIfNotExistsAsync();
+                foreach (var p in silsoPoints)
                 {
                     var entity = new TableEntity(p.date[..4], p.date)
                     {
-                        { "R", p.value.Value }
+                        { "R", p.value }
                     };
-                    await client.UpsertEntityAsync(entity, TableUpdateMode.Replace);
+                    await client2.UpsertEntityAsync(entity, TableUpdateMode.Replace);
                 }
 
-                log.LogInformation("Backfill complete: inserted {count} rows", points.Count);
+                log.LogInformation("Backfill complete: inserted {count} rows (SILSO)", silsoPoints.Count);
             }
             catch (HttpRequestException hre)
             {
@@ -232,6 +272,35 @@ namespace SunspotFunctions
                 log.LogError(ex, "Error during IngestAllAsync: {msg}", ex.Message);
                 throw;
             }
+        }
+
+        private static async Task<List<(string date, double value)>> FetchSilsoDailyAsync(ILogger log)
+        {
+            using var http = new HttpClient();
+            using var resp = await http.GetAsync(SilsoDailyUrl);
+            resp.EnsureSuccessStatusCode();
+            var text = await resp.Content.ReadAsStringAsync();
+
+            // SILSO daily format: columns separated by whitespace, lines like:
+            // yyyy m d decDate dailyTotal ...
+            var lines = text.Split(new[] { '\n', '\r' }, StringSplitOptions.RemoveEmptyEntries);
+            var list = new List<(string date, double value)>();
+            foreach (var line in lines)
+            {
+                if (line.StartsWith("#")) continue;
+                var parts = line.Trim().Split(new[] { ' ', '\t' }, StringSplitOptions.RemoveEmptyEntries);
+                if (parts.Length < 5) continue;
+                // parts[0]=year, [1]=month, [2]=day, [4]=daily total
+                if (!int.TryParse(parts[0], out var y)) continue;
+                if (!int.TryParse(parts[1], out var m)) continue;
+                if (!int.TryParse(parts[2], out var d)) continue;
+                var date = new DateTime(y, m, d).ToString("yyyy-MM-dd", CultureInfo.InvariantCulture);
+                if (double.TryParse(parts[4], NumberStyles.Any, CultureInfo.InvariantCulture, out var val))
+                {
+                    list.Add((date, val));
+                }
+            }
+            return list;
         }
     }
 }
