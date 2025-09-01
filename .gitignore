@@ -125,3 +125,36 @@ dist
 npm-debug.log*
 yarn-debug.log*
 yarn-error.log*
+
+# .NET / C# artifacts
+## Build folders
+/[Bb]in/
+/**/[Bb]in/
+/[Oo]bj/
+/**/[Oo]bj/
+
+## Visual Studio
+.vs/
+*.suo
+*.user
+*.userosscache
+*.sln.docstates
+
+## Rider
+.idea/
+
+## Azure Functions local settings
+functions/local.settings.json
+
+## Publish output
+/functions/output/
+/functions/publish/
+
+## Dotnet cache and artifacts
+*.dbmdl
+*.bak
+*.log
+
+## JetBrains Rider
+/.idea/
+
