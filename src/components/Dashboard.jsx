@@ -1,9 +1,30 @@
 import React from 'react';
 import './dashboard.css';
 import MiniLineChart from './MiniLineChart';
+import SunspotChart from './SunspotChart';
+import { fetchDaily, fetchLatest } from '../api/sunspots';
+import { useEffect, useState } from 'react';
 
 export default function Dashboard() {
   const sample = [12, 19, 8, 14, 20, 18, 24];
+  const [daily, setDaily] = useState([]);
+  const [latest, setLatest] = useState(null);
+
+  useEffect(() => {
+    (async () => {
+      try {
+        const now = new Date();
+        const from = new Date(now.getFullYear() - 1, now.getMonth(), now.getDate()).toISOString().slice(0,10);
+        const to = now.toISOString().slice(0,10);
+        const d = await fetchDaily(from, to);
+        setDaily(d);
+        const l = await fetchLatest();
+        setLatest(l);
+      } catch (e) {
+        console.warn('Failed to fetch sunspots', e);
+      }
+    })();
+  }, []);
   return (
     <div className="dashboard root-neon">
       <aside className="sidebar">
@@ -26,23 +47,18 @@ export default function Dashboard() {
         <div className="panels">
           <div className="panel large">
             <h2>Overview</h2>
-            <div className="panel-grid">
-              <div className="card">
-                <h3>Active Alerts</h3>
-                <p className="big">3</p>
+            <div style={{display:'flex', alignItems:'center', gap:16, justifyContent:'space-between'}}>
+              <div>
+                <h3>Sunspots (last 12 months)</h3>
+                <div style={{color:'var(--muted)'}}>Source: WDC-SILSO / LISIRD</div>
               </div>
-              <div className="card">
-                <h3>CPU</h3>
-                <MiniLineChart data={sample} />
+              <div style={{textAlign:'right'}}>
+                <div style={{fontSize:12, color:'var(--muted)'}}>Updated</div>
+                <div style={{fontWeight:700, color:'var(--neon-accent)'}}>{latest?.d ?? '—'}</div>
               </div>
-              <div className="card">
-                <h3>Memory</h3>
-                <MiniLineChart data={[8,10,12,9,13,11,15]} />
-              </div>
-              <div className="card">
-                <h3>Network</h3>
-                <MiniLineChart data={[2,4,1,5,3,6,4]} />
-              </div>
+            </div>
+            <div style={{marginTop:12}}>
+              <SunspotChart data={daily} />
             </div>
           </div>
 
