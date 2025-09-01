@@ -39,6 +39,7 @@ namespace SunspotFunctions
         [FunctionName("BackfillSunspots")]
         public static async Task<IActionResult> BackfillSunspots([HttpTrigger(AuthorizationLevel.Function, "post", Route = "sunspots/backfill")] HttpRequest req, ILogger log)
         {
+            var debug = req.Query.ContainsKey("debug") && req.Query["debug"] == "1";
             try
             {
                 await IngestAllAsync(log);
@@ -47,6 +48,10 @@ namespace SunspotFunctions
             catch (Exception ex)
             {
                 log.LogError(ex, "Backfill failed");
+                if (debug)
+                {
+                    return new ObjectResult(new { error = ex.Message, details = ex.ToString() }) { StatusCode = 500 };
+                }
                 return new StatusCodeResult(500);
             }
         }
@@ -171,36 +176,62 @@ namespace SunspotFunctions
         private static async Task IngestAllAsync(ILogger log)
         {
             // Full backfill: fetch entire series and upsert all rows
-            using var http = new HttpClient();
-            using var resp = await http.GetAsync(LisirdUrl);
-            resp.EnsureSuccessStatusCode();
-            using var stream = await resp.Content.ReadAsStreamAsync();
-            using var doc = await JsonDocument.ParseAsync(stream);
-
-            var points = doc.RootElement.EnumerateArray()
-                .Select(e => new
-                {
-                    date = e.GetProperty("time").GetString()!.Substring(0, 10),
-                    value = e.TryGetProperty("value", out var v) && v.ValueKind != JsonValueKind.Null ? v.GetDouble() : (double?)null
-                })
-                .Where(p => p.value.HasValue)
-                .GroupBy(p => p.date)
-                .Select(g => g.Last())
-                .ToList();
-
-            var client = GetTableClient();
-            await client.CreateIfNotExistsAsync();
-
-            foreach (var p in points)
+            try
             {
-                var entity = new TableEntity(p.date[..4], p.date)
+                using var http = new HttpClient();
+                using var resp = await http.GetAsync(LisirdUrl);
+                if (!resp.IsSuccessStatusCode)
                 {
-                    { "R", p.value.Value }
-                };
-                await client.UpsertEntityAsync(entity, TableUpdateMode.Replace);
-            }
+                    var body = await resp.Content.ReadAsStringAsync();
+                    log.LogError("LISIRD returned non-success status {status}: {body}", resp.StatusCode, body);
+                    resp.EnsureSuccessStatusCode();
+                }
 
-            log.LogInformation("Backfill complete: inserted {count} rows", points.Count);
+                using var stream = await resp.Content.ReadAsStreamAsync();
+                using var doc = await JsonDocument.ParseAsync(stream);
+
+                if (doc.RootElement.ValueKind != JsonValueKind.Array)
+                {
+                    var txt = doc.RootElement.ToString();
+                    log.LogError("Unexpected LISIRD payload: {payload}", txt);
+                    throw new InvalidOperationException("Unexpected LISIRD JSON shape");
+                }
+
+                var points = doc.RootElement.EnumerateArray()
+                    .Select(e => new
+                    {
+                        date = e.GetProperty("time").GetString()!.Substring(0, 10),
+                        value = e.TryGetProperty("value", out var v) && v.ValueKind != JsonValueKind.Null ? v.GetDouble() : (double?)null
+                    })
+                    .Where(p => p.value.HasValue)
+                    .GroupBy(p => p.date)
+                    .Select(g => g.Last())
+                    .ToList();
+
+                var client = GetTableClient();
+                await client.CreateIfNotExistsAsync();
+
+                foreach (var p in points)
+                {
+                    var entity = new TableEntity(p.date[..4], p.date)
+                    {
+                        { "R", p.value.Value }
+                    };
+                    await client.UpsertEntityAsync(entity, TableUpdateMode.Replace);
+                }
+
+                log.LogInformation("Backfill complete: inserted {count} rows", points.Count);
+            }
+            catch (HttpRequestException hre)
+            {
+                log.LogError(hre, "HTTP request error while fetching LISIRD: {msg}", hre.Message);
+                throw;
+            }
+            catch (Exception ex)
+            {
+                log.LogError(ex, "Error during IngestAllAsync: {msg}", ex.Message);
+                throw;
+            }
         }
     }
 }
