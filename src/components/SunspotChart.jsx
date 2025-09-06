@@ -21,7 +21,7 @@ function rollingMean(data, window = 30) {
   return res;
 }
 
-export default function SunspotChart({ data = [] }) {
+export default function SunspotChart({ data = [], height = 360 }) {
   const chartData = useMemo(() => {
     const daily = data.map(d => ({ x: d.d, r: d.r }));
     const mean = rollingMean(daily, 30);
@@ -29,8 +29,8 @@ export default function SunspotChart({ data = [] }) {
   }, [data]);
 
   return (
-    <div className="sunspot-chart" style={{ width: '100%', height: 360 }}>
-      <ResponsiveContainer>
+    <div className="sunspot-chart" style={{ width: '100%', height: height }}>
+      <ResponsiveContainer width="100%" height="100%">
         <LineChart data={chartData}>
           <CartesianGrid strokeDasharray="3 3" />
           <XAxis dataKey="x" minTickGap={30} />
@@ -40,7 +40,7 @@ export default function SunspotChart({ data = [] }) {
           <Line type="monotone" dataKey="r" stroke="#7afcff" dot={false} strokeWidth={2} />
           <Line type="monotone" dataKey="mean" stroke="#ff6ec7" dot={false} strokeDasharray="4 2" />
         </LineChart>
-      </ResponsiveContainer>
+    </ResponsiveContainer>
     </div>
   );
 }
