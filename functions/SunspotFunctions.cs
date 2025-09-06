@@ -21,6 +21,9 @@ namespace SunspotFunctions
         private const string TableName = "SunspotDaily";
 
         // LISIRD JSON endpoint (international sunspot number)
+        // Default JSON endpoint (LISIRD). You can override with environment variable SUNSPOT_JSON_URL
+        // Example OpenDataSoft SILSO dataset (replace with correct dataset query if you prefer):
+        // https://public.opendatasoft.com/api/records/1.0/search/?dataset=silso-daily-total-sunspot-number&rows=10000&sort=-time
         private const string LisirdUrl = "https://lasp.colorado.edu/lisird/api/international_sunspot_number/time_series?format=json";
     // SILSO daily file (text) fallback
     private const string SilsoDailyUrl = "https://www.sidc.be/silso/DATA/SN_d_tot_V2.0.txt";
@@ -138,27 +141,19 @@ namespace SunspotFunctions
         {
             // Fetch LISIRD JSON and upsert last 7 days
             using var http = new HttpClient();
-            using var resp = await http.GetAsync(LisirdUrl);
+                var jsonUrl = Environment.GetEnvironmentVariable("SUNSPOT_JSON_URL");
+                if (string.IsNullOrEmpty(jsonUrl)) jsonUrl = LisirdUrl;
+                log.LogInformation("Fetching sunspot JSON from {url}", jsonUrl);
+                using var resp = await http.GetAsync(jsonUrl);
             resp.EnsureSuccessStatusCode();
             using var stream = await resp.Content.ReadAsStreamAsync();
             using var doc = await JsonDocument.ParseAsync(stream);
 
-            if (doc.RootElement.ValueKind != JsonValueKind.Array) throw new InvalidOperationException("Unexpected LISIRD JSON shape");
-
-            var points = doc.RootElement.EnumerateArray()
-                .Select(e => new
-                {
-                    date = e.GetProperty("time").GetString()!.Substring(0, 10),
-                    value = e.TryGetProperty("value", out var v) && v.ValueKind != JsonValueKind.Null ? v.GetDouble() : (double?)null
-                })
-                .Where(p => p.value.HasValue)
-                .GroupBy(p => p.date)
-                .Select(g => g.Last())
-                .ToList();
+            var points = ParseSunspotJsonArray(doc.RootElement, log);
 
             if (!points.Any())
             {
-                log.LogWarning("No points returned from LISIRD");
+                log.LogWarning("No points returned from JSON source {url}", jsonUrl);
                 return;
             }
 
@@ -169,7 +164,7 @@ namespace SunspotFunctions
             {
                 var entity = new TableEntity(p.date[..4], p.date)
                 {
-                    { "R", p.value.Value }
+                    { "R", p.value }
                 };
                 await client.UpsertEntityAsync(entity, TableUpdateMode.Replace);
             }
@@ -188,42 +183,29 @@ namespace SunspotFunctions
                 http.DefaultRequestHeaders.Accept.ParseAdd("application/json");
                 if (!http.DefaultRequestHeaders.UserAgent.TryParseAdd("SunspotIngest/1.0 (+https://example.com)")) { }
 
-                using var resp = await http.GetAsync(LisirdUrl);
+                var jsonUrl = Environment.GetEnvironmentVariable("SUNSPOT_JSON_URL");
+                if (string.IsNullOrEmpty(jsonUrl)) jsonUrl = LisirdUrl;
+                log.LogInformation("Fetching sunspot JSON from {url}", jsonUrl);
+                using var resp = await http.GetAsync(jsonUrl);
                 var raw = await resp.Content.ReadAsStringAsync();
                 if (!resp.IsSuccessStatusCode)
                 {
-                    log.LogError("LISIRD returned non-success status {status}: {body}", resp.StatusCode, raw);
+                    log.LogError("JSON source {url} returned non-success status {status}: {body}", jsonUrl, resp.StatusCode, raw);
                     resp.EnsureSuccessStatusCode();
                 }
 
                 // Quick sanity check: if body starts with '<' it's probably HTML (error page)
                 if (!string.IsNullOrEmpty(raw) && raw.TrimStart().StartsWith("<"))
                 {
-                    log.LogError("LISIRD returned HTML instead of JSON: {snippet}", raw.Length > 800 ? raw[..800] : raw);
-                    throw new InvalidOperationException("LISIRD returned HTML instead of JSON");
+                    log.LogError("JSON source {url} returned HTML instead of JSON: {snippet}", jsonUrl, raw.Length > 800 ? raw[..800] : raw);
+                    throw new InvalidOperationException("JSON source returned HTML instead of JSON");
                 }
 
                 try
                 {
                     using var doc = JsonDocument.Parse(raw);
 
-                    if (doc.RootElement.ValueKind != JsonValueKind.Array)
-                    {
-                        var txt = doc.RootElement.ToString();
-                        log.LogWarning("LISIRD JSON not an array, falling back to SILSO CSV. payload starts: {payload}", txt.Length > 400 ? txt[..400] : txt);
-                        throw new InvalidOperationException("Unexpected LISIRD JSON shape");
-                    }
-
-                    var points = doc.RootElement.EnumerateArray()
-                        .Select(e => new
-                        {
-                            date = e.GetProperty("time").GetString()!.Substring(0, 10),
-                            value = e.TryGetProperty("value", out var v) && v.ValueKind != JsonValueKind.Null ? v.GetDouble() : (double?)null
-                        })
-                        .Where(p => p.value.HasValue)
-                        .GroupBy(p => p.date)
-                        .Select(g => g.Last())
-                        .ToList();
+                    var points = ParseSunspotJsonArray(doc.RootElement, log);
 
                     // proceed with JSON points
                     var client = GetTableClient();
@@ -233,38 +215,23 @@ namespace SunspotFunctions
                     {
                         var entity = new TableEntity(p.date[..4], p.date)
                         {
-                            { "R", p.value.Value }
+                            { "R", p.value }
                         };
                         await client.UpsertEntityAsync(entity, TableUpdateMode.Replace);
                     }
 
-                    log.LogInformation("Backfill complete: inserted {count} rows (LISIRD)", points.Count);
+                    log.LogInformation("Backfill complete: inserted {count} rows (JSON source)", points.Count);
                     return;
                 }
                 catch (Exception jsonEx)
                 {
-                    log.LogWarning(jsonEx, "Failed to parse LISIRD JSON, attempting SILSO CSV fallback");
+                    log.LogWarning(jsonEx, "Failed to parse JSON from {url}, attempting SILSO CSV fallback", jsonUrl);
                 }
 
-                // If we reach here, LISIRD parsing failed — try SILSO CSV fallback
-                log.LogInformation("Fetching SILSO daily data from {url}", SilsoDailyUrl);
-                var silsoPoints = await FetchSilsoDailyAsync(log);
-                var client2 = GetTableClient();
-                await client2.CreateIfNotExistsAsync();
-                foreach (var p in silsoPoints)
-                {
-                    var entity = new TableEntity(p.date[..4], p.date)
-                    {
-                        { "R", p.value }
-                    };
-                    await client2.UpsertEntityAsync(entity, TableUpdateMode.Replace);
-                }
-
-                log.LogInformation("Backfill complete: inserted {count} rows (SILSO)", silsoPoints.Count);
             }
             catch (HttpRequestException hre)
             {
-                log.LogError(hre, "HTTP request error while fetching LISIRD: {msg}", hre.Message);
+                log.LogError(hre, "HTTP request error while fetching JSON source: {msg}", hre.Message);
                 throw;
             }
             catch (Exception ex)
@@ -301,6 +268,75 @@ namespace SunspotFunctions
                 }
             }
             return list;
+        }
+
+        // Parse different JSON shapes into (date, value) points.
+        // Supports:
+        // - LISIRD array of { time: "YYYY-MM-DDTHH:MM:SSZ", value: number }
+        // - NOAA/SWPC array of { "time-tag": "YYYY-MM" | "YYYY-MM-DD", "ssn": number }
+        private static List<(string date, double value)> ParseSunspotJsonArray(JsonElement root, ILogger log)
+        {
+            var list = new List<(string date, double value)>();
+            if (root.ValueKind != JsonValueKind.Array)
+            {
+                log.LogWarning("JSON root not an array (was {kind})", root.ValueKind);
+                return list;
+            }
+
+            foreach (var e in root.EnumerateArray())
+            {
+                try
+                {
+                    // Try NOAA/SWPC shape first: time-tag and ssn
+                    if (e.TryGetProperty("time-tag", out var tt) && (e.TryGetProperty("ssn", out var ssn) || e.TryGetProperty("predicted_ssn", out ssn)))
+                    {
+                        var timeTag = tt.GetString();
+                        if (string.IsNullOrEmpty(timeTag)) continue;
+
+                        // NOAA provides monthly records as yyyy-mm; convert to 'yyyy-mm-01' for storage
+                        var date = timeTag.Length == 7 ? timeTag + "-01" : timeTag.Substring(0, Math.Min(10, timeTag.Length));
+                        if (ssn.ValueKind == JsonValueKind.Number && ssn.TryGetDouble(out var v))
+                        {
+                            list.Add((date, v));
+                        }
+                        continue;
+                    }
+
+                    // LISIRD shape: time and value
+                    if (e.TryGetProperty("time", out var t) && e.TryGetProperty("value", out var vprop))
+                    {
+                        var timestr = t.GetString();
+                        if (string.IsNullOrEmpty(timestr)) continue;
+                        var date = timestr.Substring(0, Math.Min(10, timestr.Length));
+                        if (vprop.ValueKind == JsonValueKind.Number && vprop.TryGetDouble(out var v))
+                        {
+                            list.Add((date, v));
+                        }
+                        continue;
+                    }
+
+                    // Also support a flat NOAA 'sunspots.json' format where each element has time-tag/ssn
+                    if (e.TryGetProperty("time_tag", out var tt2) && e.TryGetProperty("ssn", out var ssn2))
+                    {
+                        var timeTag = tt2.GetString();
+                        if (string.IsNullOrEmpty(timeTag)) continue;
+                        var date = timeTag.Length == 7 ? timeTag + "-01" : timeTag.Substring(0, Math.Min(10, timeTag.Length));
+                        if (ssn2.ValueKind == JsonValueKind.Number && ssn2.TryGetDouble(out var v))
+                        {
+                            list.Add((date, v));
+                        }
+                        continue;
+                    }
+                }
+                catch (Exception ex)
+                {
+                    log.LogDebug(ex, "Failed to parse JSON element, skipping");
+                }
+            }
+
+            // Group by date and keep last value per date
+            var grouped = list.GroupBy(p => p.date).Select(g => g.Last()).ToList();
+            return grouped;
         }
     }
 }

@@ -146,6 +146,14 @@ yarn-error.log*
 ## Azure Functions local settings
 functions/local.settings.json
 
+## Azurite (Azure Storage emulator) artifacts
+# default azurite folder when run with --location .\azurite
+azurite/
+.azurite/
+azurite-debug.log
+azurite/**
+**/azurite/**
+
 ## Publish output
 /functions/output/
 /functions/publish/
