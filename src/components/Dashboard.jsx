@@ -2,11 +2,18 @@ import React, { useEffect, useState } from 'react';
 import './dashboard.css';
 import MiniLineChart from './MiniLineChart';
 import SunspotChart from './SunspotChart';
+import YieldChart from './YieldChart';
 import { fetchDaily, fetchLatest } from '../api/sunspots';
+import { fetchYieldSpread } from '../api/fred';
 
 export default function Dashboard() {
   const [daily, setDaily] = useState([]);
   const [latest, setLatest] = useState(null);
+  const [yieldDaily, setYieldDaily] = useState([]);
+  const [consecutiveInverted, setConsecutiveInverted] = useState(0);
+  const [inversionStart, setInversionStart] = useState(null);
+  const [yieldFrom, setYieldFrom] = useState('');
+  const [yieldTo, setYieldTo] = useState('');
   const [fromDate, setFromDate] = useState('');
   const [toDate, setToDate] = useState('');
   const [loading, setLoading] = useState(false);
@@ -34,6 +41,26 @@ export default function Dashboard() {
   };
 
   useEffect(() => {
+    // compute consecutive inverted days (most recent contiguous negative spread)
+    if (!yieldDaily || !yieldDaily.length) { setConsecutiveInverted(0); return; }
+    // yieldDaily is expected in chronological order; ensure we use last entries
+    let count = 0;
+    for (let i = yieldDaily.length - 1; i >= 0; i--) {
+      const v = yieldDaily[i]?.v;
+      if (v == null) break;
+      if (v < 0) count++; else break;
+    }
+    setConsecutiveInverted(count);
+    // compute inversion start date if count > 0
+    if (count > 0) {
+      const startIdx = yieldDaily.length - count;
+      setInversionStart(yieldDaily[startIdx]?.d ?? null);
+    } else {
+      setInversionStart(null);
+    }
+  }, [yieldDaily]);
+
+  useEffect(() => {
     (async () => {
       try {
         // load saved settings or default to last 12 months
@@ -46,16 +73,29 @@ export default function Dashboard() {
   const initTab = saved?.activeTab ?? 'Overview';
     const initWidth = saved?.chartWidth ?? null;
     const initHeight = saved?.chartHeight ?? null;
-        setFromDate(initFrom);
-        setToDate(initTo);
-        setActiveTab(initTab);
+  setFromDate(initFrom);
+  setToDate(initTo);
+  const initYieldFrom = saved?.yieldFrom ?? initFrom;
+  const initYieldTo = saved?.yieldTo ?? initTo;
+  setYieldFrom(initYieldFrom);
+  setYieldTo(initYieldTo);
+  setActiveTab(initTab);
   if (initWidth) setChartWidth(initWidth);
   if (initHeight) setChartHeight(initHeight);
         setLoading(true);
-        const d = await fetchDaily(initFrom, initTo);
-        setDaily(d);
-        const l = await fetchLatest();
-        setLatest(l);
+  const d = await fetchDaily(initFrom, initTo);
+  setDaily(d);
+  const l = await fetchLatest();
+  setLatest(l);
+  // If initial tab is Yield, fetch yield spread from FRED; otherwise leave yieldDaily empty until user updates
+  if (initTab === 'Yield') {
+    try {
+      const yd = await fetchYieldSpread(initYieldFrom, initYieldTo);
+      setYieldDaily(yd);
+    } catch (e) {
+      console.warn('Failed to fetch initial yield data', e);
+    }
+  }
       } catch (e) {
         console.warn('Failed to fetch sunspots', e);
         setError(e.message || String(e));
@@ -93,13 +133,40 @@ export default function Dashboard() {
     }
   }, [activeTab]);
 
+  // When navigating to Yield tab, restore saved yield dates and data
+  useEffect(() => {
+    if (activeTab !== 'Yield') return;
+    const saved = loadSaved();
+    if (!saved) return;
+    const sf = saved.yieldFrom ?? yieldFrom;
+    const st = saved.yieldTo ?? yieldTo;
+
+    let needFetch = false;
+    if (sf && sf !== yieldFrom) { setYieldFrom(sf); needFetch = true; }
+    if (st && st !== yieldTo) { setYieldTo(st); needFetch = true; }
+
+    if (needFetch) {
+      (async () => {
+        setError(null);
+        setLoading(true);
+        try {
+          const d = await fetchYieldSpread(sf, st);
+          setYieldDaily(d);
+        } catch (e) {
+          console.warn('Failed to fetch saved yield range', e);
+          setError(e.message || String(e));
+        } finally { setLoading(false); }
+      })();
+    }
+  }, [activeTab]);
+
   // Persist key settings when they change
   useEffect(() => {
     // Don't persist until initial load has applied saved settings; this avoids
     // stomping existing saved values with initial empty defaults.
     if (!settingsLoaded) return;
     try {
-      const obj = { activeTab, fromDate, toDate, chartWidth, chartHeight };
+  const obj = { activeTab, fromDate, toDate, yieldFrom, yieldTo, chartWidth, chartHeight };
       localStorage.setItem(STORAGE_KEY, JSON.stringify(obj));
     } catch (e) {
       // ignore
@@ -184,6 +251,7 @@ export default function Dashboard() {
           <button className={activeTab==='Overview'? 'active':''} onClick={()=>setActiveTab('Overview')}>Overview</button>
           <button className={activeTab==='Sunspots'? 'active':''} onClick={()=>setActiveTab('Sunspots')}>Sunspots</button>
           <button className={activeTab==='Systems'? 'active':''} onClick={()=>setActiveTab('Systems')}>Systems</button>
+          <button className={activeTab==='Yield'? 'active':''} onClick={()=>setActiveTab('Yield')}>Yield</button>
           <button className={activeTab==='Analytics'? 'active':''} onClick={()=>setActiveTab('Analytics')}>Analytics</button>
           <button className={activeTab==='Settings'? 'active':''} onClick={()=>setActiveTab('Settings')}>Settings</button>
         </nav>
@@ -207,8 +275,8 @@ export default function Dashboard() {
                     <div style={{color:'var(--muted)'}}>Sunspots summary and system overview</div>
                   </div>
                   <div style={{textAlign:'right'}}>
-                    <div style={{fontSize:12, color:'var(--muted)'}}>Updated</div>
-                    <div style={{fontWeight:700, color:'var(--neon-accent)'}}>{latest?.d ?? '—'}</div>
+                    <div style={{fontSize:12, color:'#222'}}>Updated</div>
+                    <div style={{fontWeight:700, color:'#111'}}>{latest?.d ?? '—'}</div>
                   </div>
                 </div>
                 <div style={{marginTop:12}}>
@@ -267,6 +335,73 @@ export default function Dashboard() {
               <aside className="panel small">
                 <h3>Data</h3>
                 <div style={{fontSize:12, color:'var(--muted)'}}>Rows: {daily?.length ?? 0}</div>
+              </aside>
+            </>
+          )}
+
+          {activeTab === 'Yield' && (
+            <>
+              <div className="panel large" ref={panelRef} style={(() => {
+                const s = {};
+                if (chartWidth) s.width = chartWidth + 'px';
+                return Object.keys(s).length ? s : undefined;
+              })()}>
+                <h2>Inverted Yield Curve</h2>
+                <div style={{display:'flex', alignItems:'center', gap:16, justifyContent:'space-between'}}>
+                  <div>
+                    <h3>Yield Curve (inversion tracker)</h3>
+                    <div style={{color:'var(--muted)'}}>Source: TBD (fetched later)</div>
+                  </div>
+                </div>
+
+                <div style={{marginTop:12}}>
+                    <div style={{display:'flex', gap:8, alignItems:'center', marginBottom:8}}>
+                    <label style={{fontSize:12, color:'var(--muted)'}}>From</label>
+                    <input type="date" value={yieldFrom||''} onChange={e=>setYieldFrom(e.target.value)} />
+                    <label style={{fontSize:12, color:'var(--muted)'}}>To</label>
+                    <input type="date" value={yieldTo||''} onChange={e=>setYieldTo(e.target.value)} />
+                    <button onClick={async () => {
+                      if (!yieldFrom || !yieldTo) return;
+                      setLoading(true); setError(null);
+                      try {
+                        const d = await fetchYieldSpread(yieldFrom, yieldTo);
+                        setYieldDaily(d);
+                      } catch (e) { setError(e.message || String(e)); }
+                      finally { setLoading(false); }
+                    }} disabled={loading} style={{marginLeft:8}}>{loading? 'Loading...' : 'Update'}</button>
+                  </div>
+                  {error && <div style={{color:'var(--danger)', marginBottom:8}}>Error: {error}</div>}
+                  {/* quick summary */}
+                  <div style={{display:'flex', gap:12, marginBottom:10}}>
+                    <div className="card" style={{padding:10}}>
+                      <div style={{fontSize:12, color:'var(--muted)'}}>Latest 10y</div>
+                      <div style={{fontWeight:700, color:'var(--neon-accent)'}}>{yieldDaily?.slice().reverse()[0]?.dgs10 ?? '—'}</div>
+                    </div>
+                    <div className="card" style={{padding:10}}>
+                      <div style={{fontSize:12, color:'var(--muted)'}}>Latest 2y</div>
+                      <div style={{fontWeight:700, color:'var(--neon-accent)'}}>{yieldDaily?.slice().reverse()[0]?.dgs2 ?? '—'}</div>
+                    </div>
+                    <div className="card" style={{padding:10}}>
+                      <div style={{fontSize:12, color:'var(--muted)'}}>Latest Spread</div>
+                      <div style={{fontWeight:700, color: (yieldDaily?.slice().reverse()[0]?.v ?? 0) < 0 ? '#ff6ec7' : 'var(--neon-accent)'}}>{yieldDaily?.slice().reverse()[0]?.v ?? '—'}</div>
+                    </div>
+                    <div className="card" style={{padding:10}}>
+                      <div style={{fontSize:12, color:'var(--muted)'}}>Consecutive Inverted Days</div>
+                      <div style={{fontWeight:700, color: consecutiveInverted > 0 ? '#ff6ec7' : 'var(--neon-accent)'}}>{consecutiveInverted}</div>
+                    </div>
+                  </div>
+
+                  <div className="chart-wrap" ref={chartRef} style={chartHeight ? {height: chartHeight + 'px'} : undefined}>
+                    <YieldChart data={yieldDaily} height={chartHeight} inversionStart={inversionStart} />
+                    <div className="panel-vresizer" onMouseDown={startVResize} onTouchStart={startVResize} title="Drag to resize vertically" />
+                  </div>
+                </div>
+                <div className="panel-resizer" onMouseDown={startResize} onTouchStart={startResize} title="Drag to resize" />
+              </div>
+
+              <aside className="panel small">
+                <h3>Data</h3>
+                <div style={{fontSize:12, color:'var(--muted)'}}>Rows: {yieldDaily?.length ?? 0}</div>
               </aside>
             </>
           )}

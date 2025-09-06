@@ -21,7 +21,7 @@ function rollingMean(data, window = 30) {
   return res;
 }
 
-export default function SunspotChart({ data = [], height = 360 }) {
+export default function SunspotChart({ data = [], height = 360, lineColor = '#7afcff', meanColor = '#ff6ec7', areaFill = 'rgba(122,252,255,0.06)' }) {
   const chartData = useMemo(() => {
     const daily = data.map(d => ({ x: d.d, r: d.r }));
     const mean = rollingMean(daily, 30);
@@ -36,9 +36,9 @@ export default function SunspotChart({ data = [], height = 360 }) {
           <XAxis dataKey="x" minTickGap={30} />
           <YAxis />
           <Tooltip />
-          <Area type="monotone" dataKey="mean" stroke="none" fill="rgba(122,252,255,0.06)" />
-          <Line type="monotone" dataKey="r" stroke="#7afcff" dot={false} strokeWidth={2} />
-          <Line type="monotone" dataKey="mean" stroke="#ff6ec7" dot={false} strokeDasharray="4 2" />
+          <Area type="monotone" dataKey="mean" stroke="none" fill={areaFill} />
+          <Line type="monotone" dataKey="r" stroke={lineColor} dot={false} strokeWidth={2} />
+          <Line type="monotone" dataKey="mean" stroke={meanColor} dot={false} strokeDasharray="4 2" />
         </LineChart>
     </ResponsiveContainer>
     </div>
