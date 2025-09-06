@@ -11,6 +11,37 @@
 .brand { font-weight:800; letter-spacing:1px; color:var(--neon-magenta); font-size:18px; margin-bottom:18px }
 .sidebar nav a { display:block; padding:8px 6px; color:var(--muted); margin:6px 0; border-radius:6px; cursor:pointer }
 .sidebar nav a.active, .sidebar nav a:hover { color:white; background: rgba(122,252,255,0.04); box-shadow: 0 0 12px rgba(122,252,255,0.06) }
+
+/* Buttons in the sidebar (we render <button> for accessibility) */
+.sidebar nav button {
+  display:block;
+  width:100%;
+  text-align:left;
+  padding:10px 12px;
+  color:var(--muted);
+  margin:6px 0;
+  border-radius:8px;
+  background:transparent;
+  border:1px solid transparent;
+  cursor:pointer;
+  font-weight:600;
+  font-size:13px;
+  transition:all .14s ease;
+  box-shadow: none;
+}
+.sidebar nav button:hover {
+  color: #fff;
+  background: linear-gradient(90deg, rgba(122,252,255,0.03), rgba(255,110,199,0.02));
+  box-shadow: 0 8px 24px rgba(122,252,255,0.03);
+  transform: translateY(-1px);
+}
+.sidebar nav button.active {
+  color: var(--neon-accent);
+  background: linear-gradient(90deg, rgba(122,252,255,0.06), rgba(255,110,199,0.02));
+  box-shadow: 0 10px 30px rgba(122,252,255,0.08), inset 0 1px 0 rgba(255,255,255,0.02);
+  border:1px solid rgba(122,252,255,0.06);
+}
+.sidebar nav button:focus { outline:none; box-shadow: 0 0 0 4px rgba(122,252,255,0.03); }
 .sidebar-footer { margin-top:auto; font-size:12px; color:var(--muted) }
 
 .main { flex:1; display:flex; flex-direction:column }
