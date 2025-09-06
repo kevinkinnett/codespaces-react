@@ -20,13 +20,9 @@ namespace SunspotFunctions
         // Table used for daily observations
         private const string TableName = "SunspotDaily";
 
-        // LISIRD JSON endpoint (international sunspot number)
-        // Default JSON endpoint (LISIRD). You can override with environment variable SUNSPOT_JSON_URL
-        // Example OpenDataSoft SILSO dataset (replace with correct dataset query if you prefer):
-        // https://public.opendatasoft.com/api/records/1.0/search/?dataset=silso-daily-total-sunspot-number&rows=10000&sort=-time
-        private const string LisirdUrl = "https://lasp.colorado.edu/lisird/api/international_sunspot_number/time_series?format=json";
-    // SILSO daily file (text) fallback
-    private const string SilsoDailyUrl = "https://www.sidc.be/silso/DATA/SN_d_tot_V2.0.txt";
+    // Default JSON source: NOAA SWPC sunspots (monthly historical)
+    // Can be overridden with environment variable SUNSPOT_JSON_URL
+    private const string DefaultJsonUrl = "https://services.swpc.noaa.gov/json/solar-cycle/sunspots.json";
 
         [FunctionName("IngestSunspotsTimer")]
         public static async Task IngestSunspotsTimer([TimerTrigger("0 5 2 * * *")] TimerInfo myTimer, ILogger log)
@@ -141,8 +137,7 @@ namespace SunspotFunctions
         {
             // Fetch LISIRD JSON and upsert last 7 days
             using var http = new HttpClient();
-                var jsonUrl = Environment.GetEnvironmentVariable("SUNSPOT_JSON_URL");
-                if (string.IsNullOrEmpty(jsonUrl)) jsonUrl = LisirdUrl;
+            var jsonUrl = GetJsonUrl(log);
                 log.LogInformation("Fetching sunspot JSON from {url}", jsonUrl);
                 using var resp = await http.GetAsync(jsonUrl);
             resp.EnsureSuccessStatusCode();
@@ -183,8 +178,7 @@ namespace SunspotFunctions
                 http.DefaultRequestHeaders.Accept.ParseAdd("application/json");
                 if (!http.DefaultRequestHeaders.UserAgent.TryParseAdd("SunspotIngest/1.0 (+https://example.com)")) { }
 
-                var jsonUrl = Environment.GetEnvironmentVariable("SUNSPOT_JSON_URL");
-                if (string.IsNullOrEmpty(jsonUrl)) jsonUrl = LisirdUrl;
+                var jsonUrl = GetJsonUrl(log);
                 log.LogInformation("Fetching sunspot JSON from {url}", jsonUrl);
                 using var resp = await http.GetAsync(jsonUrl);
                 var raw = await resp.Content.ReadAsStringAsync();
@@ -241,33 +235,13 @@ namespace SunspotFunctions
             }
         }
 
-        private static async Task<List<(string date, double value)>> FetchSilsoDailyAsync(ILogger log)
+        // Helper to choose JSON source URL (env override or default)
+        private static string GetJsonUrl(ILogger log)
         {
-            using var http = new HttpClient();
-            using var resp = await http.GetAsync(SilsoDailyUrl);
-            resp.EnsureSuccessStatusCode();
-            var text = await resp.Content.ReadAsStringAsync();
-
-            // SILSO daily format: columns separated by whitespace, lines like:
-            // yyyy m d decDate dailyTotal ...
-            var lines = text.Split(new[] { '\n', '\r' }, StringSplitOptions.RemoveEmptyEntries);
-            var list = new List<(string date, double value)>();
-            foreach (var line in lines)
-            {
-                if (line.StartsWith("#")) continue;
-                var parts = line.Trim().Split(new[] { ' ', '\t' }, StringSplitOptions.RemoveEmptyEntries);
-                if (parts.Length < 5) continue;
-                // parts[0]=year, [1]=month, [2]=day, [4]=daily total
-                if (!int.TryParse(parts[0], out var y)) continue;
-                if (!int.TryParse(parts[1], out var m)) continue;
-                if (!int.TryParse(parts[2], out var d)) continue;
-                var date = new DateTime(y, m, d).ToString("yyyy-MM-dd", CultureInfo.InvariantCulture);
-                if (double.TryParse(parts[4], NumberStyles.Any, CultureInfo.InvariantCulture, out var val))
-                {
-                    list.Add((date, val));
-                }
-            }
-            return list;
+            var jsonUrl = Environment.GetEnvironmentVariable("SUNSPOT_JSON_URL");
+            if (string.IsNullOrEmpty(jsonUrl)) jsonUrl = DefaultJsonUrl;
+            log.LogDebug("Using SUNSPOT_JSON_URL={url}", jsonUrl);
+            return jsonUrl;
         }
 
         // Parse different JSON shapes into (date, value) points.
