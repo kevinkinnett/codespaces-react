@@ -54,19 +54,26 @@
 .panel.large { flex:1 0 auto; background: linear-gradient(180deg, rgba(255,255,255,0.01), rgba(255,255,255,0.008)); padding:18px; border-radius:10px; box-shadow: 0 6px 30px rgba(0,0,0,0.6); position:relative; min-width:360px }
 .panel.small { width:320px; background: linear-gradient(180deg, rgba(255,255,255,0.01), rgba(255,255,255,0.008)); padding:18px; border-radius:10px }
 
-.panel-resizer {
-  position:absolute;
-  top:8px;
-  right:-8px;
-  width:16px;
-  height:calc(100% - 16px);
-  cursor:col-resize;
-  border-radius:8px;
-  background: linear-gradient(90deg, rgba(255,255,255,0.01), rgba(255,255,255,0.02));
-  box-shadow: 0 6px 18px rgba(0,0,0,0.4);
-  transition:background .12s ease;
+.panel.small.collapsed { width:40px; padding:8px; overflow:hidden; transition:width .18s ease, padding .18s ease; }
+.panel.small.collapsed h3, .panel.small.collapsed .notes, .panel.small.collapsed .card, .panel.small.collapsed .chart-wrap { display:none; }
+.panel.small .collapse-btn { position:absolute; top:8px; right:8px; background:transparent; border:1px solid rgba(255,255,255,0.03); color:var(--muted); padding:6px 8px; border-radius:6px; cursor:pointer }
+.collapse-btn {
+  background: linear-gradient(90deg, rgba(0,0,0,0.4), rgba(255,255,255,0.02));
+  color: white;
+  border: 0;
+  width: 24px;
+  height: 24px;
+  border-radius: 4px;
+  cursor: pointer;
+  box-shadow: 0 2px 6px rgba(0,0,0,0.4);
 }
-.panel-resizer:hover { background: linear-gradient(90deg, rgba(122,252,255,0.03), rgba(255,110,199,0.02)); }
+.panel.small.collapsed .collapse-btn { right:6px; }
+
+/* collapse button when placed on the large panel (keeps it outside the resizer) */
+.panel.large > .collapse-btn { position:absolute; right:-44px; top:8px; width:30px; height:30px; display:flex; align-items:center; justify-content:center; background:rgba(0,0,0,0.35); border-radius:6px; color:var(--neon-accent); border:1px solid rgba(122,252,255,0.06) }
+.panel.large > .collapse-btn:hover { transform:translateX(-2px) }
+
+/* horizontal resizer removed */
 
 /* Vertical resizer (bottom edge) */
 .panel-vresizer {

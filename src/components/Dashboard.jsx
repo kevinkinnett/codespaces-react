@@ -23,20 +23,20 @@ export default function Dashboard() {
   const STORAGE_KEY = 'codespaces-react.dashboard.v1';
   const [chartWidth, setChartWidth] = useState(null); // px
   const [chartHeight, setChartHeight] = useState(null); // px
+  const [rightCollapsed, setRightCollapsed] = useState(false);
   const [settingsLoaded, setSettingsLoaded] = useState(false);
   const panelRef = React.useRef(null);
   const chartRef = React.useRef(null);
-  const resizingRef = React.useRef(false);
   const resizingYRef = React.useRef(false);
 
   // Load saved settings (if any)
   const loadSaved = () => {
     try {
-      const raw = localStorage.getItem(STORAGE_KEY);
-      if (!raw) return null;
+  const raw = localStorage.getItem(STORAGE_KEY);
+  if (!raw) return {};
   return JSON.parse(raw);
     } catch (e) {
-      return null;
+  return {};
     }
   };
 
@@ -63,25 +63,30 @@ export default function Dashboard() {
   useEffect(() => {
     (async () => {
       try {
-        // load saved settings or default to last 12 months
-        const saved = loadSaved();
+  // load saved settings or default to last 12 months
+  const saved = loadSaved() || {};
         const now = new Date();
         const defFrom = new Date(now.getFullYear() - 1, now.getMonth(), now.getDate()).toISOString().slice(0,10);
         const defTo = now.toISOString().slice(0,10);
-        const initFrom = saved?.fromDate ?? defFrom;
-        const initTo = saved?.toDate ?? defTo;
   const initTab = saved?.activeTab ?? 'Overview';
-    const initWidth = saved?.chartWidth ?? null;
-    const initHeight = saved?.chartHeight ?? null;
+  // per-tab saved values
+  const tabs = saved?.tabs ?? {};
+  const sun = tabs?.Sunspots ?? {};
+  const yld = tabs?.Yield ?? {};
+  const initFrom = sun.fromDate ?? defFrom;
+  const initTo = sun.toDate ?? defTo;
+  const initYieldFrom = yld.yieldFrom ?? initFrom;
+  const initYieldTo = yld.yieldTo ?? initTo;
   setFromDate(initFrom);
   setToDate(initTo);
-  const initYieldFrom = saved?.yieldFrom ?? initFrom;
-  const initYieldTo = saved?.yieldTo ?? initTo;
   setYieldFrom(initYieldFrom);
   setYieldTo(initYieldTo);
   setActiveTab(initTab);
-  if (initWidth) setChartWidth(initWidth);
-  if (initHeight) setChartHeight(initHeight);
+  // apply chart dimensions and right-panel collapsed from the active tab if available
+  const dims = (tabs[initTab] && { w: tabs[initTab].chartWidth, h: tabs[initTab].chartHeight, c: tabs[initTab].collapsed }) || {};
+  if (dims.w) setChartWidth(dims.w);
+  if (dims.h) setChartHeight(dims.h);
+  setRightCollapsed(!!dims.c);
         setLoading(true);
   const d = await fetchDaily(initFrom, initTo);
   setDaily(d);
@@ -108,10 +113,12 @@ export default function Dashboard() {
   // When navigating back to the Sunspots tab, ensure saved dates are applied to the inputs
   useEffect(() => {
     if (activeTab !== 'Sunspots') return;
-    const saved = loadSaved();
-    if (!saved) return;
-    const sf = saved.fromDate ?? fromDate;
-    const st = saved.toDate ?? toDate;
+  const saved = loadSaved() || {};
+  const tabs = saved.tabs || {};
+  const sf = tabs?.Sunspots?.fromDate ?? fromDate;
+  const st = tabs?.Sunspots?.toDate ?? toDate;
+  const sc = tabs?.Sunspots?.collapsed ?? false;
+  setRightCollapsed(!!sc);
 
     // If saved dates differ from current inputs, apply them and refresh data
     let needFetch = false;
@@ -136,10 +143,12 @@ export default function Dashboard() {
   // When navigating to Yield tab, restore saved yield dates and data
   useEffect(() => {
     if (activeTab !== 'Yield') return;
-    const saved = loadSaved();
-    if (!saved) return;
-    const sf = saved.yieldFrom ?? yieldFrom;
-    const st = saved.yieldTo ?? yieldTo;
+  const saved = loadSaved() || {};
+  const tabs = saved.tabs || {};
+  const sf = tabs?.Yield?.yieldFrom ?? yieldFrom;
+  const st = tabs?.Yield?.yieldTo ?? yieldTo;
+  const yc = tabs?.Yield?.collapsed ?? false;
+  setRightCollapsed(!!yc);
 
     let needFetch = false;
     if (sf && sf !== yieldFrom) { setYieldFrom(sf); needFetch = true; }
@@ -162,34 +171,35 @@ export default function Dashboard() {
 
   // Persist key settings when they change
   useEffect(() => {
-    // Don't persist until initial load has applied saved settings; this avoids
-    // stomping existing saved values with initial empty defaults.
     if (!settingsLoaded) return;
     try {
-  const obj = { activeTab, fromDate, toDate, yieldFrom, yieldTo, chartWidth, chartHeight };
-      localStorage.setItem(STORAGE_KEY, JSON.stringify(obj));
+      const saved = loadSaved() || {};
+      if (!saved.tabs) saved.tabs = {};
+      const tabObj = saved.tabs[activeTab] || {};
+      // Save fields depending on tab
+      if (activeTab === 'Sunspots') {
+        tabObj.fromDate = fromDate;
+        tabObj.toDate = toDate;
+      } else if (activeTab === 'Yield') {
+        tabObj.yieldFrom = yieldFrom;
+        tabObj.yieldTo = yieldTo;
+      }
+      // chart sizes are tab-specific
+      tabObj.chartWidth = chartWidth;
+      tabObj.chartHeight = chartHeight;
+    tabObj.collapsed = !!rightCollapsed;
+      saved.tabs[activeTab] = tabObj;
+      saved.activeTab = activeTab;
+      localStorage.setItem(STORAGE_KEY, JSON.stringify(saved));
     } catch (e) {
       // ignore
     }
-  }, [settingsLoaded, activeTab, fromDate, toDate, chartWidth, chartHeight]);
+  }, [settingsLoaded, activeTab, fromDate, toDate, yieldFrom, yieldTo, chartWidth, chartHeight, rightCollapsed]);
 
   // resizing handlers
   useEffect(() => {
     function onMove(e) {
       const touch = e.touches && e.touches[0];
-      // Horizontal (width)
-      if (resizingRef.current) {
-        const clientX = e.clientX ?? (touch && touch.clientX);
-        if (panelRef.current && clientX != null) {
-          const rect = panelRef.current.getBoundingClientRect();
-          const min = 400, max = Math.max(480, window.innerWidth - 320 - 80);
-          let w = Math.round(clientX - rect.left);
-          if (w < min) w = min;
-          if (w > max) w = max;
-          setChartWidth(w);
-        }
-      }
-
       // Vertical (height)
       if (resizingYRef.current) {
         const clientY = e.clientY ?? (touch && touch.clientY);
@@ -203,7 +213,7 @@ export default function Dashboard() {
         }
       }
     }
-    function onUp() { resizingRef.current = false; resizingYRef.current = false; document.body.style.cursor = ''; document.body.style.userSelect = ''; }
+    function onUp() { resizingYRef.current = false; document.body.style.cursor = ''; document.body.style.userSelect = ''; }
     window.addEventListener('mousemove', onMove);
     window.addEventListener('touchmove', onMove);
     window.addEventListener('mouseup', onUp);
@@ -215,13 +225,6 @@ export default function Dashboard() {
       window.removeEventListener('touchend', onUp);
     };
   }, []);
-
-  function startResize(e) {
-    e.preventDefault();
-    resizingRef.current = true;
-    document.body.style.cursor = 'col-resize';
-    document.body.style.userSelect = 'none';
-  }
 
   function startVResize(e) {
     e.preventDefault();
@@ -242,7 +245,7 @@ export default function Dashboard() {
       setError(e.message || String(e));
     } finally { setLoading(false); }
   }
-
+  
   return (
     <div className="dashboard root-neon">
       <aside className="sidebar">
@@ -268,6 +271,14 @@ export default function Dashboard() {
           {activeTab === 'Overview' && (
             <>
               <div className="panel large">
+                <button
+                  className="collapse-btn"
+                  title={rightCollapsed ? 'Expand panel' : 'Collapse panel'}
+                  onClick={() => setRightCollapsed(prev => !prev)}
+                  style={{ position: 'absolute', right: '-44px', top: 8 }}
+                >
+                  {rightCollapsed ? '›' : '‹'}
+                </button>
                 <h2>Overview</h2>
                 <div style={{display:'flex', alignItems:'center', gap:16, justifyContent:'space-between'}}>
                   <div>
@@ -284,7 +295,7 @@ export default function Dashboard() {
                 </div>
               </div>
 
-              <aside className="panel small">
+              <aside className={`panel small ${rightCollapsed ? 'collapsed' : ''}`}>
                 <h3>Quick Notes</h3>
                 <ul className="notes">
                   <li>Remember to wire Azure static deploy</li>
@@ -302,6 +313,14 @@ export default function Dashboard() {
                 if (chartWidth) s.width = chartWidth + 'px';
                 return Object.keys(s).length ? s : undefined;
               })()}>
+                <button
+                  className="collapse-btn"
+                  title={rightCollapsed ? 'Expand panel' : 'Collapse panel'}
+                  onClick={() => setRightCollapsed(prev => !prev)}
+                  style={{ position: 'absolute', right: '-44px', top: 8 }}
+                >
+                  {rightCollapsed ? '›' : '‹'}
+                </button>
                 <h2>Sunspots</h2>
                 <div style={{display:'flex', alignItems:'center', gap:16, justifyContent:'space-between'}}>
                   <div>
@@ -328,11 +347,10 @@ export default function Dashboard() {
                     <div className="panel-vresizer" onMouseDown={startVResize} onTouchStart={startVResize} title="Drag to resize vertically" />
                   </div>
                 </div>
-                {/* resizer handle on the right edge of this panel */}
-                <div className="panel-resizer" onMouseDown={startResize} onTouchStart={startResize} title="Drag to resize" />
+                {/* horizontal resizer removed */}
               </div>
 
-              <aside className="panel small">
+              <aside className={`panel small ${rightCollapsed ? 'collapsed' : ''}`}>
                 <h3>Data</h3>
                 <div style={{fontSize:12, color:'var(--muted)'}}>Rows: {daily?.length ?? 0}</div>
               </aside>
@@ -346,6 +364,14 @@ export default function Dashboard() {
                 if (chartWidth) s.width = chartWidth + 'px';
                 return Object.keys(s).length ? s : undefined;
               })()}>
+                <button
+                  className="collapse-btn"
+                  title={rightCollapsed ? 'Expand panel' : 'Collapse panel'}
+                  onClick={() => setRightCollapsed(prev => !prev)}
+                  style={{ position: 'absolute', right: '-44px', top: 8 }}
+                >
+                  {rightCollapsed ? '›' : '‹'}
+                </button>
                 <h2>Inverted Yield Curve</h2>
                 <div style={{display:'flex', alignItems:'center', gap:16, justifyContent:'space-between'}}>
                   <div>
@@ -396,10 +422,9 @@ export default function Dashboard() {
                     <div className="panel-vresizer" onMouseDown={startVResize} onTouchStart={startVResize} title="Drag to resize vertically" />
                   </div>
                 </div>
-                <div className="panel-resizer" onMouseDown={startResize} onTouchStart={startResize} title="Drag to resize" />
               </div>
 
-              <aside className="panel small">
+              <aside className={`panel small ${rightCollapsed ? 'collapsed' : ''}`}>
                 <h3>Data</h3>
                 <div style={{fontSize:12, color:'var(--muted)'}}>Rows: {yieldDaily?.length ?? 0}</div>
               </aside>
