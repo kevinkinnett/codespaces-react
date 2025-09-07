@@ -24,6 +24,7 @@ export default function Dashboard() {
   const [chartWidth, setChartWidth] = useState(null); // px
   const [chartHeight, setChartHeight] = useState(null); // px
   const [rightCollapsed, setRightCollapsed] = useState(false);
+  const [leftCollapsed, setLeftCollapsed] = useState(false);
   const [settingsLoaded, setSettingsLoaded] = useState(false);
   const panelRef = React.useRef(null);
   const chartRef = React.useRef(null);
@@ -71,6 +72,8 @@ export default function Dashboard() {
   const initTab = saved?.activeTab ?? 'Overview';
   // per-tab saved values
   const tabs = saved?.tabs ?? {};
+  const initLeftCollapsed = !!saved?.leftCollapsed;
+  setLeftCollapsed(initLeftCollapsed);
   const sun = tabs?.Sunspots ?? {};
   const yld = tabs?.Yield ?? {};
   const initFrom = sun.fromDate ?? defFrom;
@@ -190,6 +193,7 @@ export default function Dashboard() {
     tabObj.collapsed = !!rightCollapsed;
       saved.tabs[activeTab] = tabObj;
       saved.activeTab = activeTab;
+  saved.leftCollapsed = !!leftCollapsed;
       localStorage.setItem(STORAGE_KEY, JSON.stringify(saved));
     } catch (e) {
       // ignore
@@ -202,6 +206,7 @@ export default function Dashboard() {
       const touch = e.touches && e.touches[0];
       // Vertical (height)
       if (resizingYRef.current) {
+        if (e.cancelable) e.preventDefault();
         const clientY = e.clientY ?? (touch && touch.clientY);
         if (chartRef.current && clientY != null) {
           const rect = chartRef.current.getBoundingClientRect();
@@ -215,12 +220,12 @@ export default function Dashboard() {
     }
     function onUp() { resizingYRef.current = false; document.body.style.cursor = ''; document.body.style.userSelect = ''; }
     window.addEventListener('mousemove', onMove);
-    window.addEventListener('touchmove', onMove);
+    window.addEventListener('touchmove', onMove, { passive: false });
     window.addEventListener('mouseup', onUp);
     window.addEventListener('touchend', onUp);
     return () => {
       window.removeEventListener('mousemove', onMove);
-      window.removeEventListener('touchmove', onMove);
+      window.removeEventListener('touchmove', onMove, { passive: false });
       window.removeEventListener('mouseup', onUp);
       window.removeEventListener('touchend', onUp);
     };
@@ -248,8 +253,16 @@ export default function Dashboard() {
   
   return (
     <div className="dashboard root-neon">
-      <aside className="sidebar">
+      <aside className={`sidebar ${leftCollapsed ? 'collapsed' : ''}`}>
         <div className="brand">NEON-OPS</div>
+        <button
+          className="collapse-btn sidebar-toggle"
+          title={leftCollapsed ? 'Expand sidebar' : 'Collapse sidebar'}
+          onClick={() => setLeftCollapsed(prev => !prev)}
+          style={{ position: 'absolute', right: -36, top: 10 }}
+        >
+          {leftCollapsed ? '›' : '‹'}
+        </button>
         <nav>
           <button className={activeTab==='Overview'? 'active':''} onClick={()=>setActiveTab('Overview')}>Overview</button>
           <button className={activeTab==='Sunspots'? 'active':''} onClick={()=>setActiveTab('Sunspots')}>Sunspots</button>
